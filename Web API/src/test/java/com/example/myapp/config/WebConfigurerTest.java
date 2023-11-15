@@ -1,0 +1,132 @@
+package com.example.myapp.config;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+
+import javax.servlet.Filter;
+import javax.servlet.FilterRegistration;
+import javax.servlet.Servlet;
+import javax.servlet.ServletRegistration;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.web.embedded.undertow.UndertowServletWebServerFactory;
+import org.springframework.http.HttpHeaders;
+import org.springframework.mock.env.MockEnvironment;
+import org.springframework.mock.web.MockServletContext;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.cors.CorsConfiguration;
+
+import com.example.myapp.resource.WebConfigurerTestController;
+
+class WebConfigurerTest {
+
+	private WebConfigurer webConfigurer;
+
+	private MockServletContext servletContext;
+
+	private MockEnvironment env;
+
+	private CorsConfiguration cors;
+
+	@BeforeEach
+	public void setup() {
+		servletContext = spy(new MockServletContext());
+		doReturn(mock(FilterRegistration.Dynamic.class)).when(servletContext).addFilter(anyString(), any(Filter.class));
+		doReturn(mock(ServletRegistration.Dynamic.class)).when(servletContext).addServlet(anyString(),
+				any(Servlet.class));
+
+		env = new MockEnvironment();
+
+		cors = new CorsConfiguration();
+
+		webConfigurer = new WebConfigurer(env);
+	}
+
+	@Test
+	void shouldCustomizeServletContainer() {
+		env.setActiveProfiles("prod");
+		UndertowServletWebServerFactory container = new UndertowServletWebServerFactory();
+		webConfigurer.customize(container);
+		assertThat(container.getMimeMappings().get("abs")).isEqualTo("audio/x-mpeg");
+		assertThat(container.getMimeMappings().get("html")).isEqualTo("text/html");
+		assertThat(container.getMimeMappings().get("json")).isEqualTo("application/json");
+		if (container.getDocumentRoot() != null) {
+			assertThat(container.getDocumentRoot()).isEqualTo(new File("target/classes/static/"));
+		}
+	}
+
+	@Test
+	void shouldCorsFilterOnApiPath() throws Exception {
+		cors.setAllowedOrigins(Collections.singletonList("other.domain.com"));
+		cors.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE"));
+		cors.setAllowedHeaders(Collections.singletonList("*"));
+		cors.setMaxAge(1800L);
+		cors.setAllowCredentials(true);
+
+		MockMvc mockMvc = MockMvcBuilders.standaloneSetup(new WebConfigurerTestController())
+				.addFilters(webConfigurer.corsFilter()).build();
+
+		mockMvc.perform(options("/api/test-cors").header(HttpHeaders.ORIGIN, "other.domain.com")
+				.header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST")).andExpect(status().isOk())
+				.andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "other.domain.com"))
+				.andExpect(header().string(HttpHeaders.VARY, "Origin"))
+				.andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS, "GET,POST,PUT,DELETE"))
+				.andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true"))
+				.andExpect(header().string(HttpHeaders.ACCESS_CONTROL_MAX_AGE, "1800"));
+
+		mockMvc.perform(get("/api/test-cors").header(HttpHeaders.ORIGIN, "other.domain.com")).andExpect(status().isOk())
+				.andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "other.domain.com"));
+	}
+
+	@Test
+	void shouldCorsFilterOnOtherPath() throws Exception {
+		cors.setAllowedOrigins(Collections.singletonList("*"));
+		cors.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE"));
+		cors.setAllowedHeaders(Collections.singletonList("*"));
+		cors.setMaxAge(1800L);
+		cors.setAllowCredentials(true);
+
+		MockMvc mockMvc = MockMvcBuilders.standaloneSetup(new WebConfigurerTestController())
+				.addFilters(webConfigurer.corsFilter()).build();
+
+		mockMvc.perform(get("/test/test-cors").header(HttpHeaders.ORIGIN, "other.domain.com"))
+				.andExpect(status().isOk()).andExpect(header().doesNotExist(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN));
+	}
+
+	@Test
+	void shouldCorsFilterDeactivatedForNullAllowedOrigins() throws Exception {
+		cors.setAllowedOrigins(null);
+
+		MockMvc mockMvc = MockMvcBuilders.standaloneSetup(new WebConfigurerTestController())
+				.addFilters(webConfigurer.corsFilter()).build();
+
+		mockMvc.perform(get("/api/test-cors").header(HttpHeaders.ORIGIN, "other.domain.com")).andExpect(status().isOk())
+				.andExpect(header().doesNotExist(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN));
+	}
+
+	@Test
+	void shouldCorsFilterDeactivatedForEmptyAllowedOrigins() throws Exception {
+		cors.setAllowedOrigins(new ArrayList<>());
+
+		MockMvc mockMvc = MockMvcBuilders.standaloneSetup(new WebConfigurerTestController())
+				.addFilters(webConfigurer.corsFilter()).build();
+
+		mockMvc.perform(get("/api/test-cors").header(HttpHeaders.ORIGIN, "other.domain.com")).andExpect(status().isOk())
+				.andExpect(header().doesNotExist(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN));
+	}
+}

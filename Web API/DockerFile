@@ -1,0 +1,8 @@
+#base image: linux alpine os with open jdk 8
+FROM openjdk:8-jdk-alpine
+
+#copy jar from local unto docker image
+COPY target/myApp-1.0.jar myApp-1.0.jar
+
+#command line to run jar
+ENTRYPOINT ["java","-jar","/myApp-1.0.jar"]
